@@ -55,4 +55,11 @@ echo "0 6 * * * ubuntu $INSTALL_DIR/deploy/cron-update.sh >> $INSTALL_DIR/data/c
 sudo chmod 644 "$CRON_FILE"
 echo "Cron installed: daily at 06:00 UTC"
 
+# Systemd service for DB server
+sudo cp "$INSTALL_DIR/deploy/jlcpcb-parts-db.service" /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable jlcpcb-parts-db
+sudo systemctl restart jlcpcb-parts-db
+echo "DB server started on port 8484"
+
 echo "=== Setup complete ==="

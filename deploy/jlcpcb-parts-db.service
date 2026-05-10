@@ -1,0 +1,14 @@
+[Unit]
+Description=JLCPCB Parts DB Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/jlcpcb-parts-db
+ExecStart=/opt/jlcpcb-parts-db/.venv/bin/python -m src.serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
