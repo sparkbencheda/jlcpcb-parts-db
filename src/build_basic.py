@@ -67,8 +67,8 @@ def _build_parts_basic() -> Path:
             SELECT lcsc, mfr, package, description, datasheet FROM components
         """)
 
-        dst.execute("DETACH DATABASE source")
         dst.commit()
+        dst.execute("DETACH DATABASE source")
         dst.execute("VACUUM")
         dst.execute("ANALYZE")
         dst.commit()
