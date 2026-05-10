@@ -1,64 +1,166 @@
-![CSV File Preview](/images/CSV.avif)
-
 # JLCPCB Parts Database
 
-This repository processes the massive SQLite database from [yaqwsx/jlcparts](https://github.com/yaqwsx/jlcparts) into two convenient files.
+VPS-deployed pipeline that produces two SQLite databases for [sparkbench-parts](../sparkbench-parts):
 
-### Files
+1. **jlcpcb-parts.sqlite3** -- full catalog of in-stock JLCPCB parts with FTS5 search
+2. **jlcpcb-assets.sqlite3** -- compressed CAD data (footprints, symbols, 3D models) crawled from EasyEDA
 
-* **Basic and Preferred Parts CSV**: A lightweight (~3MB) CSV file containing basic and preferred parts information.
-* **In-Stock Components SQLite Database**: A filtered SQLite database (~1GB) containing only components with five or more items in stock.
+## Data Sources
 
-### Why
+### Parts Catalog
 
-The original database is a massive 10GB multi-volume zip archive, unsupported by most zip libraries due to its use of an older part of the zip standard. This repository simplifies access to the data by providing smaller, more manageable files.
+Derived from [yaqwsx/jlcparts](https://github.com/yaqwsx/jlcparts), which scrapes the full JLCPCB catalog ~3x/day and publishes a SQLite database to GitHub Pages as a split zip archive.
 
-### Automatically Updated Files
+Our pipeline downloads this upstream DB, removes parts with stock < 5, applies basic/preferred assembly flags from the JLCPCB API, builds an FTS5 index, and outputs the final `jlcpcb-parts.sqlite3`.
 
-Both files are automatically updated using GitHub Actions and hosted on GitHub Pages:
+### EasyEDA CAD Data
 
-* [Basic and Preferred Parts CSV](https://cdfer.github.io/jlcpcb-parts-database/jlcpcb-components-basic-preferred.csv)
-* [In-Stock Components SQLite Database](https://cdfer.github.io/jlcpcb-parts-database/jlcpcb-components.sqlite3)
+[EasyEDA](https://easyeda.com) is JLCPCB's PCB design tool. Each JLCPCB part (identified by LCSC ID) has associated CAD data: schematic symbols, PCB footprints, and 3D models. We crawl the EasyEDA API for every part in the catalog and store the compressed JSON responses.
 
-### Example Usage
+## Database Schemas
 
-Check out the included Jupyter Notebooks! It is probably best to start with `sqlite-search.ipynb` for an example of how to download the database and perform a basic search on the SQLite database using a SQLite query. For CSV files, consider using the pandas library for Python.
+### jlcpcb-parts.sqlite3
 
-### Contributions
+~616K parts, ~1.6 GB.
 
-Feel free to contribute to this repository by reporting issues, suggesting improvements, or adding new features!
+**`components`** -- one row per in-stock JLCPCB part:
 
-## How it Works
+| Column | Type | Description |
+|--------|------|-------------|
+| `lcsc` | INTEGER PK | LCSC part number (e.g. 1002 = C1002) |
+| `category_id` | INTEGER FK | References `categories.id` |
+| `mfr` | TEXT | Manufacturer part number (MPN) |
+| `package` | TEXT | Package/footprint name (e.g. "0603", "SOP-8") |
+| `joints` | INTEGER | Solder joint count (pin count) |
+| `manufacturer_id` | INTEGER FK | References `manufacturers.id` |
+| `basic` | INTEGER | 1 = JLCPCB basic part (no extended fee) |
+| `preferred` | INTEGER | 1 = JLCPCB preferred part |
+| `description` | TEXT | Part description with specs |
+| `datasheet` | TEXT | Datasheet URL |
+| `stock` | INTEGER | Current stock quantity |
+| `price` | TEXT | JSON array of price tiers from yaqwsx (qFrom/qTo/price) |
+| `last_update` | INTEGER | Unix timestamp of last upstream update |
+| `extra` | TEXT | JSON blob with enriched data (see below) |
+| `flag` | INTEGER | Upstream flag field |
+| `last_on_stock` | INTEGER | Timestamp when last seen in stock |
 
-This repository uses a GitHub Actions workflow (`.github/workflows/sync-db.yml`) to automatically update the parts database, running on a default Ubuntu image. Here's a step-by-step explanation of the process:
+**`extra` JSON structure** (from yaqwsx enrichment):
 
-### Steps
+```json
+{
+  "id": 1354,
+  "number": "C1002",
+  "category": {"id1": 10991, "id2": 527, "name1": "Filters", "name2": "Ferrite Beads"},
+  "manufacturer": {"id": 270, "name": "Sunlord"},
+  "mpn": "GZ1608D601TF",
+  "quantity": 389835,
+  "moq": 20,
+  "order_multiple": 20,
+  "packaging": "Tape & Reel (TR)",
+  "prices": [{"min_qty": 20, "max_qty": 199, "currency": "USD", "price": 0.0047}, ...],
+  "datasheet": {"pdf": "https://wmsc.lcsc.com/..."},
+  "images": [{"96x96": "...", "224x224": "...", "900x900": "..."}, ...],
+  "rohs": true,
+  "attributes": {"DC Resistance": "450mOhm", "Tolerance": "+/-25%", ...},
+  "url": "https://lcsc.com/product-detail/..."
+}
+```
 
-1. **Trigger**
+**`categories`**:
 
-* The workflow triggers daily at 6:00 AM UTC, three hours after yaqwsx/jlcparts updates their database, on code commit, or manually using the "Run workflow" button.
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Category ID |
+| `category` | TEXT | Top-level category (e.g. "Filters/EMI Optimization") |
+| `subcategory` | TEXT | Subcategory (e.g. "Ferrite Beads") |
 
-2. **Download Database**
+**`manufacturers`**:
 
-* The workflow downloads the latest JLCPCB parts database zip volumes from <https://github.com/yaqwsx/jlcparts>.
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Manufacturer ID |
+| `name` | TEXT | Manufacturer name |
 
-3. **Extract Database**
+**`v_components`** -- convenience view joining all three tables.
 
-* The workflow extracts the database files using 7zip, one of the few modern implementations supporting zip volumes.
+**`components_fts`** -- FTS5 virtual table indexing `lcsc`, `mfr`, `package`, `description`, `datasheet`.
 
-4. **Run Python Script**
+### jlcpcb-assets.sqlite3
 
-* The workflow runs the `generate-database.py` script, which:
-* Renames the database file.
-* Deletes components with low stock (<5).
-* Creates an FTS (Full-Text Search) index for faster searching.
-* Reindexes and vacuums the database to reduce file size.
-* Retrieves basic/preferred components and saves them to a CSV file using pandas.
+~378K rows, ~1.5 GB (61% crawled, est. 3.1 GB complete).
 
-5. **Upload Artifact**
+| Column | Type | Description |
+|--------|------|-------------|
+| `lcsc` | INTEGER PK | LCSC part number |
+| `cad_data` | BLOB | gzip-compressed JSON from EasyEDA components API |
+| `svg_data` | BLOB | gzip-compressed JSON from EasyEDA SVGs API (nullable) |
+| `fetched_at` | TEXT | ISO timestamp of when this row was fetched |
+| `status` | TEXT | `ok`, `not_found`, `partial`, or `error` |
 
-* The workflow uploads the updated database files as a GitHub Pages artifact.
+The `cad_data` blob contains the full EasyEDA component response (schematic symbol, footprint geometry, 3D model references). Decompress with `gzip.decompress()` to get the JSON string.
 
-6. **Deploy**
+## Pipeline
 
-* The workflow deploys the updated database files to the GitHub Pages environment.
+```
+yaqwsx/jlcparts (GitHub Pages, updated 3x/day)
+    |
+    v
+pull_upstream.py         Download split zip, extract cache.sqlite3
+    |
+    v
+scrape_basic_preferred.py   Query JLCPCB API for basic/preferred flags
+    |
+    v
+build_db.py              Filter stock < 5, apply flags, build FTS5, VACUUM
+    |
+    v
+jlcpcb-parts.sqlite3   Final catalog DB
+
+easyeda.com API
+    |
+    v
+crawl_easyeda.py         Crawl all LCSC IDs via SOCKS5 proxies
+    |
+    v
+jlcpcb-assets.sqlite3    Compressed CAD data cache
+```
+
+The catalog pipeline runs daily via cron at 06:00 UTC. The EasyEDA crawl runs continuously until the initial backfill is complete, then incrementally for new parts.
+
+## Usage
+
+```bash
+# Full catalog pipeline
+python -m src.pull_upstream
+python -m src.scrape_basic_preferred
+python -m src.build_db
+
+# EasyEDA crawl (requires SOCKS5 proxies)
+python -m src.crawl_easyeda crawl --proxy-file proxies.txt --workers 40 --skip-svg
+python -m src.crawl_easyeda status
+```
+
+## Deployment
+
+Deployed to `/opt/jlcpcb-parts-db/` on VPS.
+
+```bash
+bash deploy/setup.sh          # install deps, create venv, set up daily cron
+bash deploy/cron-update.sh    # manual run of the catalog pipeline
+```
+
+The EasyEDA crawl runs in a tmux session:
+
+```bash
+tmux new-session -d -s easyeda-crawl \
+  "cd /opt/jlcpcb-parts-db && source .venv/bin/activate && \
+   python3 -m src.crawl_easyeda crawl --proxy-file proxies.txt --workers 40 --skip-svg 2>&1 | tee data/crawl.log"
+```
+
+### Proxy file format
+
+One proxy per line: `host:port:user:pass` (SOCKS5).
+
+## License
+
+MIT -- see [LICENSE](LICENSE).

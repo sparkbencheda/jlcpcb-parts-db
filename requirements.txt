@@ -1,6 +1,3 @@
-# requirements.txt
-
-numpy==2.1.*
-pandas==2.2.*
-requests==2.32.*
-brotli==1.1.*
+requests
+certifi
+pysocks
