@@ -42,7 +42,7 @@ def _get_volume_count(zip_path: Path) -> int:
     """Parse 7z listing to find total volume count."""
     result = subprocess.run(
         ["7z", "l", str(zip_path)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True,
     )
     for line in result.stdout.splitlines():
         if "Volume Index" in line:
