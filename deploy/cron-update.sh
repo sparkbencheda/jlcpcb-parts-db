@@ -5,7 +5,7 @@ cd /opt/jlcpcb-parts-db
 source .venv/bin/activate
 
 LOG="/opt/jlcpcb-parts-db/data/update.log"
-mkdir -p data
+mkdir -p data/upstream
 
 echo "[$(date -Iseconds)] Starting DB update..." | tee -a "$LOG"
 

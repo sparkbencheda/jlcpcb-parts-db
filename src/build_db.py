@@ -1,4 +1,4 @@
-"""Build the final jlcpcb-components.sqlite3 from upstream + flags.
+"""Build the final jlcpcb-parts.sqlite3 from upstream + flags.
 
 Pipeline:
 1. Copy upstream cache.sqlite3
