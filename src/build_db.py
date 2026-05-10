@@ -1,17 +1,15 @@
 """Build the final jlcpcb-parts.sqlite3 from upstream + flags.
 
 Pipeline:
-1. Copy upstream cache.sqlite3
-2. Delete low-stock parts
+1. Create fresh output DB
+2. Attach upstream cache.sqlite3 and insert only in-stock parts
 3. Apply basic/preferred flags from scraped data
 4. Build FTS5 index
 5. VACUUM + optimize
 """
 from __future__ import annotations
 
-import contextlib
 import logging
-import shutil
 import sqlite3
 from pathlib import Path
 
@@ -28,9 +26,7 @@ def build() -> Path:
         raise FileNotFoundError(f"Upstream DB not found: {UPSTREAM_DB}")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    log.info("Copying upstream DB to %s ...", OUTPUT_DB)
-    shutil.copy2(str(UPSTREAM_DB), str(OUTPUT_DB))
+    OUTPUT_DB.unlink(missing_ok=True)
 
     conn = sqlite3.connect(str(OUTPUT_DB))
     try:
@@ -39,11 +35,45 @@ def build() -> Path:
         conn.execute("PRAGMA temp_store = MEMORY")
         conn.execute("PRAGMA mmap_size = 536870912")
 
-        cur = conn.cursor()
+        conn.execute("ATTACH DATABASE ? AS upstream", (f"file:{UPSTREAM_DB}?mode=ro",))
 
-        cur.execute("DELETE FROM components WHERE stock < ?", (MIN_STOCK,))
+        log.info("Creating schema from upstream...")
+        for table in ("categories", "manufacturers"):
+            schema = conn.execute(
+                "SELECT sql FROM upstream.sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone()[0]
+            conn.execute(schema)
+            conn.execute(f"INSERT INTO {table} SELECT * FROM upstream.{table}")
+
+        comp_schema = conn.execute(
+            "SELECT sql FROM upstream.sqlite_master WHERE type='table' AND name='components'"
+        ).fetchone()[0]
+        conn.execute(comp_schema)
+
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO components SELECT * FROM upstream.components WHERE stock >= ?",
+            (MIN_STOCK,),
+        )
+        log.info("Inserted %d in-stock parts (stock >= %d)", cur.rowcount, MIN_STOCK)
+
+        view_sql = conn.execute(
+            "SELECT sql FROM upstream.sqlite_master WHERE type='view' AND name='v_components'"
+        ).fetchone()
+        if view_sql:
+            conn.execute(view_sql[0])
+
+        for idx in conn.execute(
+            "SELECT sql FROM upstream.sqlite_master WHERE type='index' AND sql IS NOT NULL"
+        ).fetchall():
+            try:
+                conn.execute(idx[0])
+            except sqlite3.OperationalError:
+                pass
+
         conn.commit()
-        log.info("Removed %d low-stock parts (<%d)", cur.rowcount, MIN_STOCK)
+        conn.execute("DETACH DATABASE upstream")
 
         if FLAGS_DB.exists():
             log.info("Applying basic/preferred flags from %s ...", FLAGS_DB)
@@ -61,20 +91,15 @@ def build() -> Path:
             """)
             log.info("Marked %d preferred parts", cur.rowcount)
 
-            conn.execute("DETACH DATABASE flags")
             conn.commit()
+            conn.execute("DETACH DATABASE flags")
         else:
             log.warning("No flags DB found at %s — skipping flag application", FLAGS_DB)
 
         log.info("Building FTS5 index...")
-        cur.execute("DROP TABLE IF EXISTS components_fts")
         cur.execute("""
             CREATE VIRTUAL TABLE components_fts USING fts5(
-                lcsc,
-                mfr,
-                package,
-                description,
-                datasheet,
+                lcsc, mfr, package, description, datasheet,
                 content='components'
             )
         """)
@@ -85,9 +110,7 @@ def build() -> Path:
         conn.commit()
         log.info("FTS5 index built")
 
-        log.info("Running REINDEX, VACUUM, ANALYZE...")
-        cur.execute("REINDEX")
-        conn.commit()
+        log.info("Running VACUUM, ANALYZE...")
         cur.execute("VACUUM")
         conn.commit()
         cur.execute("ANALYZE")
