@@ -115,10 +115,10 @@ def _build_assets_basic() -> Path:
             WHERE c.basic = 1 OR c.preferred = 1
         """)
         dst.execute("CREATE INDEX idx_easyeda_status ON easyeda_cache(status)")
+        dst.commit()
 
         dst.execute("DETACH DATABASE parts")
         dst.execute("DETACH DATABASE assets")
-        dst.commit()
         dst.execute("VACUUM")
         dst.commit()
     finally:
