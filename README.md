@@ -19,85 +19,18 @@ Our pipeline downloads this upstream DB, removes parts with stock < 5, applies b
 
 ## Database Schemas
 
-### jlcpcb-parts.sqlite3
+Four databases are produced, two full and two basic/preferred filtered variants:
 
-~616K parts, ~1.6 GB.
+| Database | Contents | Rows | Size |
+|----------|----------|------|------|
+| `jlcpcb-parts.sqlite3` | Full in-stock parts catalog with FTS5 | ~631K | ~1.8 GB |
+| `jlcpcb-parts-basic.sqlite3` | Basic/preferred parts only with FTS5 | ~1.3K | ~4 MB |
+| `jlcpcb-assets.sqlite3` | EasyEDA CAD data for all parts | ~631K | ~3 GB |
+| `jlcpcb-assets-basic.sqlite3` | EasyEDA CAD data for basic/preferred | ~1.3K | ~30 MB |
 
-**`components`** -- one row per in-stock JLCPCB part:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `lcsc` | INTEGER PK | LCSC part number (e.g. 1002 = C1002) |
-| `category_id` | INTEGER FK | References `categories.id` |
-| `mfr` | TEXT | Manufacturer part number (MPN) |
-| `package` | TEXT | Package/footprint name (e.g. "0603", "SOP-8") |
-| `joints` | INTEGER | Solder joint count (pin count) |
-| `manufacturer_id` | INTEGER FK | References `manufacturers.id` |
-| `basic` | INTEGER | 1 = JLCPCB basic part (no extended fee) |
-| `preferred` | INTEGER | 1 = JLCPCB preferred part |
-| `description` | TEXT | Part description with specs |
-| `datasheet` | TEXT | Datasheet URL |
-| `stock` | INTEGER | Current stock quantity |
-| `price` | TEXT | JSON array of price tiers from yaqwsx (qFrom/qTo/price) |
-| `last_update` | INTEGER | Unix timestamp of last upstream update |
-| `extra` | TEXT | JSON blob with enriched data (see below) |
-| `flag` | INTEGER | Upstream flag field |
-| `last_on_stock` | INTEGER | Timestamp when last seen in stock |
-
-**`extra` JSON structure** (from yaqwsx enrichment):
-
-```json
-{
-  "id": 1354,
-  "number": "C1002",
-  "category": {"id1": 10991, "id2": 527, "name1": "Filters", "name2": "Ferrite Beads"},
-  "manufacturer": {"id": 270, "name": "Sunlord"},
-  "mpn": "GZ1608D601TF",
-  "quantity": 389835,
-  "moq": 20,
-  "order_multiple": 20,
-  "packaging": "Tape & Reel (TR)",
-  "prices": [{"min_qty": 20, "max_qty": 199, "currency": "USD", "price": 0.0047}, ...],
-  "datasheet": {"pdf": "https://wmsc.lcsc.com/..."},
-  "images": [{"96x96": "...", "224x224": "...", "900x900": "..."}, ...],
-  "rohs": true,
-  "attributes": {"DC Resistance": "450mOhm", "Tolerance": "+/-25%", ...},
-  "url": "https://lcsc.com/product-detail/..."
-}
-```
-
-**`categories`**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Category ID |
-| `category` | TEXT | Top-level category (e.g. "Filters/EMI Optimization") |
-| `subcategory` | TEXT | Subcategory (e.g. "Ferrite Beads") |
-
-**`manufacturers`**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Manufacturer ID |
-| `name` | TEXT | Manufacturer name |
-
-**`v_components`** -- convenience view joining all three tables.
-
-**`components_fts`** -- FTS5 virtual table indexing `lcsc`, `mfr`, `package`, `description`, `datasheet`.
-
-### jlcpcb-assets.sqlite3
-
-~378K rows, ~1.5 GB (61% crawled, est. 3.1 GB complete).
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `lcsc` | INTEGER PK | LCSC part number |
-| `cad_data` | BLOB | gzip-compressed JSON from EasyEDA components API |
-| `svg_data` | BLOB | gzip-compressed JSON from EasyEDA SVGs API (nullable) |
-| `fetched_at` | TEXT | ISO timestamp of when this row was fetched |
-| `status` | TEXT | `ok`, `not_found`, `partial`, or `error` |
-
-The `cad_data` blob contains the full EasyEDA component response (schematic symbol, footprint geometry, 3D model references). Decompress with `gzip.decompress()` to get the JSON string.
+Full schema documentation with JSON column structures and query examples:
+- **[docs/schema-jlcpcb-parts.md](docs/schema-jlcpcb-parts.md)** -- components, categories, manufacturers, FTS5, `price`/`extra`/`jlc_extra` JSON schemas
+- **[docs/schema-jlcpcb-assets.md](docs/schema-jlcpcb-assets.md)** -- easyeda_cache table, `cad_data`/`svg_data` blob formats, decompression examples
 
 ## Pipeline
 
