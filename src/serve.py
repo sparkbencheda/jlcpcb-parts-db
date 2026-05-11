@@ -179,18 +179,53 @@ class DBHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_index(self) -> None:
-        lines = ["JLCPCB Parts DB\n"]
+        rows = ""
         for key, entry in SERVE_FILES.items():
             path = entry["path"]
             if path.exists():
-                size_mb = path.stat().st_size / (1024 ** 2)
-                lines.append(f"  /{path.name}  ({size_mb:.1f} MB)")
+                stat = path.stat()
+                size_mb = stat.st_size / (1024 ** 2)
+                updated = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                size_str = f"{size_mb:.1f} MB" if size_mb < 1024 else f"{size_mb / 1024:.1f} GB"
+                rows += f"""<tr>
+                    <td><a href="/{path.name}">{path.name}</a></td>
+                    <td>{entry['description']}</td>
+                    <td>{size_str}</td>
+                    <td>{updated}</td>
+                </tr>"""
             else:
-                lines.append(f"  /{path.name}  (not built)")
-        lines.append(f"\n  /metadata.json")
-        body = "\n".join(lines).encode()
+                rows += f"""<tr>
+                    <td>{path.name}</td>
+                    <td>{entry['description']}</td>
+                    <td colspan="2">Not built</td>
+                </tr>"""
+
+        html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>JLCPCB Parts DB</title>
+<style>
+  body {{ font-family: -apple-system, system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #333; }}
+  h1 {{ font-size: 1.4em; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+  th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #e0e0e0; }}
+  th {{ font-weight: 600; color: #666; font-size: 0.85em; text-transform: uppercase; }}
+  a {{ color: #2563eb; text-decoration: none; }}
+  a:hover {{ text-decoration: underline; }}
+  .meta {{ margin-top: 30px; font-size: 0.9em; color: #888; }}
+</style>
+</head><body>
+<h1>JLCPCB Parts DB</h1>
+<p>SQLite databases for <a href="https://sparkbench.ai">Sparkbench Parts</a>. Rebuilt daily from <a href="https://github.com/yaqwsx/jlcparts">yaqwsx/jlcparts</a>.</p>
+<table>
+  <tr><th>File</th><th>Description</th><th>Size</th><th>Updated</th></tr>
+  {rows}
+</table>
+<p class="meta"><a href="/metadata.json">metadata.json</a> &mdash; machine-readable catalog with part counts and timestamps</p>
+</body></html>"""
+        body = html.encode()
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
