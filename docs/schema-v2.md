@@ -22,11 +22,14 @@ GET {dataStrId}
   → AES-256-GCM encrypted blob (key/iv from previous response)
   → decrypt → gzip decompress → NDJSON Pro format
 
-GET https://modules.easyeda.com/3dmodel/{model_uuid}
-  → OBJ format 3D model
-
-GET https://modules.easyeda.com/qAxj6KHrDKw4blvCG8QJPs7Y/{model_uuid}
+GET https://modules.easyeda.com/qAxj6KHrDKw4blvCG8QJPs7Y/{step_uuid}
   → STEP format 3D model
+
+Note: the "3D Model" attribute UUID from searchByCodes is a component UUID
+(doc_type=16), NOT the STEP file UUID. To get the STEP file:
+  1. Fetch the model component: GET /api/v2/components/{model_uuid}
+  2. Extract `result.3d_model_uuid` (or `result.dataStr.model`)
+  3. Fetch STEP: GET https://modules.easyeda.com/qAxj6KHrDKw4blvCG8QJPs7Y/{step_uuid}
 ```
 
 ## Schema
@@ -217,32 +220,45 @@ ORDER BY part_count DESC
 LIMIT 20;
 ```
 
-## Size Estimates
+## Size: Basic/Preferred Variant (actual)
 
-| Table | Rows | Size |
-|-------|------|------|
-| parts + categories + manufacturers | 631K | ~1.8 GB |
-| parts_fts | 631K | ~200 MB |
-| components (deduplicated symbols + footprints) | ~76K | ~250 MB |
-| devices (LCSC → component mapping) | ~631K | ~30 MB |
-| models (metadata only, no STEP) | ~56K | ~5 MB |
-| **Total (without 3D)** | | **~2.3 GB** |
-| models with STEP data | ~56K | +50-60 GB |
+`jlcpcb-v2-basic.sqlite3` — 49.9 MB
 
-### Variants
+| Table | Rows | Notes |
+|-------|------|-------|
+| parts | 1,346 | basic + preferred only |
+| categories | ~120 | referenced by parts |
+| manufacturers | ~200 | referenced by parts |
+| devices | 1,333 | 13 parts have no EasyEDA device entry |
+| components | 1,521 | 1,333 symbols + 188 footprints (deduplicated) |
+| models | 158 | 158/169 with STEP data (11 unavailable on CDN) |
+| parts_fts | 1,346 | full-text search index |
+
+### Deduplication ratios
+
+| Layer | Unique | Parts served | Ratio |
+|-------|--------|-------------|-------|
+| Symbols | 1,333 | 1,333 | 1:1 (each part has unique symbol) |
+| Footprints | 188 | 1,333 | 7:1 (e.g. 116 parts share R0603) |
+| 3D Models | 158 | 1,328 | 8.4:1 |
+
+### Estimated full variant
 
 | Database | Contents | Size |
 |----------|----------|------|
-| `jlcpcb-parts.sqlite3` | All in-stock parts + CAD | ~2.3 GB |
-| `jlcpcb-parts-basic.sqlite3` | Basic/preferred only + CAD | ~10-15 MB |
+| `jlcpcb-v2-basic.sqlite3` | Basic/preferred parts + CAD + 3D | 49.9 MB |
+| `jlcpcb-v2.sqlite3` (full) | All in-stock parts + CAD + 3D | ~2-4 GB (TBD) |
 
 ## Client Architecture
 
 ```
 sparkbench-parts (Electron)
-├── Downloads jlcpcb-parts.sqlite3 on install (or basic variant)
-├── Renders symbols/footprints from local components table
+├── Downloads jlcpcb-v2-basic.sqlite3 on install (~50 MB)
 ├── Full-text search via parts_fts
-└── 3D models fetched on demand:
-    GET /3d/{model_uuid}.step → stored in local models table
+├── Renders symbols from components table (doc_type=2, NDJSON)
+├── Renders footprints from components table (doc_type=4, NDJSON)
+└── 3D models from models table (gzip-compressed STEP, decompress with zlib)
 ```
+
+All data is local after download — no further API calls needed.
+See `docs/v2-integration.md` for query examples and NDJSON parsing details.
