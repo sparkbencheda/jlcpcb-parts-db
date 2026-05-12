@@ -30,6 +30,10 @@ SERVE_FILES = {
         "path": DATA_DIR / "jlcpcb-assets-basic.sqlite3",
         "description": "EasyEDA CAD data for basic/preferred parts only",
     },
+    "jlcpcb-v2-basic": {
+        "path": DATA_DIR / "jlcpcb-v2-basic.sqlite3",
+        "description": "Unified v2: basic/preferred parts + EasyEDA Pro CAD + 3D models",
+    },
 }
 
 DEFAULT_PORT = 8484
@@ -53,7 +57,13 @@ def _file_metadata(key: str, entry: dict) -> dict | None:
 
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        if "assets" in key:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "devices" in tables:
+            meta["parts_total"] = conn.execute("SELECT COUNT(*) FROM parts").fetchone()[0]
+            meta["devices"] = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+            meta["components"] = conn.execute("SELECT COUNT(*) FROM components").fetchone()[0]
+            meta["models"] = conn.execute("SELECT COUNT(*) FROM models WHERE step_data IS NOT NULL").fetchone()[0]
+        elif "easyeda_cache" in tables:
             counts = dict(conn.execute(
                 "SELECT status, COUNT(*) FROM easyeda_cache GROUP BY status"
             ).fetchall())
